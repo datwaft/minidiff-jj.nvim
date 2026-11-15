@@ -21,7 +21,7 @@ local function find_repo_dir(root)
     return repo
   end
   local target = vim.trim(vim.fn.readfile(repo)[1])
-  local path = vim.startswith(target, "/") and target or vim.fs.joinpath(jj_dir, target)
+  local path = vim.fs.abspath(target, { cwd = jj_dir, plain = true })
   return assert(vim.uv.fs_realpath(path), "minidiff-jj: missing jj repo: " .. path)
 end
 

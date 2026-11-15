@@ -6,8 +6,8 @@ local workspace = require("minidiff_jj.workspace")
 local M = {}
 
 ---@class minidiff_jj.Buffer
----@field root   string Workspace root
----@field cancel fun()? Cancels the reference request of the latest refresh
+---@field root string          Workspace root
+---@field task vim.async.Task? The last `refresh()`, which the next one or a detach closes
 
 ---@type table<integer, minidiff_jj.Buffer>
 local buffers = {}
@@ -27,21 +27,33 @@ local function real_path(buf)
   return vim.uv.fs_realpath(name) or vim.fs.joinpath(vim.uv.fs_realpath(dir) or dir, vim.fs.basename(name))
 end
 
+--- Updates the buffer's reference text, the text mini.diff diffs it against: asks jj for the file
+--- in the parents of `@`, then gives the answer to mini.diff. Runs on attach and after every jj
+--- operation.
 ---@param buf integer
 local function refresh(buf)
   local state = buffers[buf]
   -- An older answer could replace this one
-  if state.cancel then
-    state.cancel()
+  if state.task then
+    state.task:close()
   end
   local rel_path = vim.fs.relpath(state.root, assert(real_path(buf)))
   -- The buffer was renamed out of the workspace
   if not rel_path then
-    state.cancel = nil
+    state.task = nil
     return require("mini.diff").set_ref_text(buf, nil)
   end
-  state.cancel = reference.get(state.root, rel_path, function(text)
+  ---@async
+  local function update()
+    local text = reference.get(state.root, rel_path)
+    -- Awaiting jj resumes in a fast event, where mini.diff can't run
+    vim.async.await(vim.schedule)
     require("mini.diff").set_ref_text(buf, text)
+  end
+  state.task = vim.async.run(update)
+  state.task:on_complete(function(err)
+    -- "closed": cancelled by a newer refresh or a detach
+    assert(err == nil or err == "closed", err)
   end)
 end
 
@@ -79,8 +91,8 @@ local function detach(buf)
   end
   buffers[buf] = nil
   -- `MiniDiff.set_ref_text()` would enable the buffer again
-  if state.cancel then
-    state.cancel()
+  if state.task then
+    state.task:close()
   end
   vim.api.nvim_clear_autocmds({ group = augroup, buffer = buf })
   workspace.remove(state.root, buf)
