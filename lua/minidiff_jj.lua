@@ -3,10 +3,11 @@
 local M = {}
 
 ---@class minidiff_jj.Workspace
----@field root    string
----@field buffers table<integer, true> Attached buffers in the workspace
----@field watcher uv.uv_fs_event_t     Watches the repo's operation heads
----@field timer   uv.uv_timer_t        Debounces refreshes
+---@field root               string
+---@field buffers            table<integer, true> Attached buffers in the workspace
+---@field watcher            uv.uv_fs_event_t     Watches the repo's operation heads
+---@field timer              uv.uv_timer_t        Debounces refreshes
+---@field snapshot_scheduled boolean
 
 ---@class minidiff_jj.Buffer
 ---@field workspace minidiff_jj.Workspace
@@ -16,6 +17,8 @@ local M = {}
 local workspaces = {}
 ---@type table<integer, minidiff_jj.Buffer>
 local buffers = {}
+
+local augroup = vim.api.nvim_create_augroup("minidiff_jj", { clear = true })
 
 -- A diff tool that prints the left side of a file's diff: the file in the parents of `@`, merged if
 -- there are several, and before its rename if it was renamed
@@ -128,6 +131,7 @@ local function open_workspace(root)
     buffers = {},
     watcher = assert(vim.uv.new_fs_event()),
     timer = assert(vim.uv.new_timer()),
+    snapshot_scheduled = false,
   }
   -- Every jj operation (commit, rebase, snapshot, ...) replaces the operation heads, which can change `@`
   local heads = vim.fs.joinpath(find_repo_dir(root), "op_heads", "heads")
@@ -148,6 +152,26 @@ local function open_workspace(root)
   return workspace
 end
 
+--- Snapshots the working copy, which records new and renamed files. Writes in the same event loop
+--- iteration (`:wall`) share one snapshot.
+---@param workspace minidiff_jj.Workspace
+local function snapshot(workspace)
+  if workspace.snapshot_scheduled then
+    return
+  end
+  workspace.snapshot_scheduled = true
+  vim.schedule(function()
+    workspace.snapshot_scheduled = false
+    local cmd = { "jj", "--quiet", "util", "snapshot" }
+    vim.system(
+      cmd, { cwd = workspace.root, text = true },
+      vim.schedule_wrap(function(result)
+        assert(result.code == 0, ("minidiff-jj: jj util snapshot failed: %s"):format(result.stderr))
+      end)
+    )
+  end)
+end
+
 ---@param buf integer
 ---@return false?
 local function attach(buf)
@@ -164,6 +188,13 @@ local function attach(buf)
   local workspace = workspaces[root]
   workspace.buffers[buf] = true
   buffers[buf] = { workspace = workspace }
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = augroup,
+    buffer = buf,
+    callback = function()
+      snapshot(workspace)
+    end,
+  })
   refresh(buf)
 end
 
@@ -177,6 +208,7 @@ local function detach(buf)
   if state.job then
     state.job:kill("sigterm")
   end
+  vim.api.nvim_clear_autocmds({ group = augroup, buffer = buf })
 
   local workspace = state.workspace
   workspace.buffers[buf] = nil
