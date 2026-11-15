@@ -26,23 +26,47 @@ local function attach(buf)
   if not root then
     return false
   end
+  local rel_path = assert(vim.fs.relpath(root, path))
 
-  -- `--ignore-working-copy`: reading the repo shouldn't record an operation
-  local cmd = { "jj", "--ignore-working-copy", "--no-pager", "--color=never" }
-  -- jj reads paths as filesets: quote them, relative to the workspace root
-  local fileset = ('root-file:"%s"'):format((vim.fs.relpath(root, path):gsub('[\\"]', "\\%0")))
-  vim.list_extend(cmd, { "file", "show", "-r", "@-", "--", fileset })
-  vim.system(
-    cmd, { cwd = root, text = true },
-    vim.schedule_wrap(function(result)
-      -- Not in `@-`: a new file, or one jj doesn't track
-      if result.code ~= 0 and result.stderr:find("No such path", 1, true) then
-        return require("mini.diff").set_ref_text(buf, nil)
-      end
-      assert(result.code == 0, ("minidiff-jj: %s failed: %s"):format(table.concat(cmd, " "), result.stderr))
-      require("mini.diff").set_ref_text(buf, result.stdout)
-    end)
-  )
+  ---@param args           string[]
+  ---@param on_exit        fun(result: vim.SystemCompleted)
+  ---@param expected_error string?                          Part of an error message that doesn't fail the refresh
+  local function jj(args, on_exit, expected_error)
+    -- `--ignore-working-copy`: reading the repo shouldn't record an operation
+    local cmd = { "jj", "--ignore-working-copy", "--no-pager", "--color=never" }
+    vim.list_extend(cmd, args)
+    -- jj reads paths as filesets: quote them, relative to the workspace root
+    vim.list_extend(cmd, { "--", ('root-file:"%s"'):format((rel_path:gsub('[\\"]', "\\%0"))) })
+    vim.system(
+      cmd, { cwd = root, text = true },
+      vim.schedule_wrap(function(result)
+        assert(
+          result.code == 0 or (expected_error and result.stderr:find(expected_error, 1, true)),
+          ("minidiff-jj: %s failed: %s"):format(table.concat(cmd, " "), result.stderr)
+        )
+        on_exit(result)
+      end)
+    )
+  end
+
+  jj({ "diff", "-r", "@", "-T", 'self.status() ++ "\\n"' }, function(diff)
+    local status = vim.trim(diff.stdout)
+    if status == "" then
+      -- Unchanged in `@`, or not tracked (ignored, or new and not snapshotted yet)
+      jj({ "file", "show", "-r", "@" }, function(show)
+        require("mini.diff").set_ref_text(buf, show.code == 0 and show.stdout or nil)
+      end, "No such path"
+      )
+    elseif status == "added" then
+      require("mini.diff").set_ref_text(buf, "")
+    elseif status == "modified" or status == "removed" then
+      jj({ "file", "show", "-r", "@-" }, function(show)
+        require("mini.diff").set_ref_text(buf, show.stdout)
+      end)
+    else
+      error(("minidiff-jj: unknown jj diff status %q"):format(status))
+    end
+  end)
 end
 
 --- Generates the source. See `:h MiniDiff-source-specification`.

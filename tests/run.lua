@@ -99,6 +99,20 @@ test("unchanged file: its own version", function()
   expect_ref(edit(root .. "/f.txt"), { "a", "b" })
 end)
 
+test("new file: all lines added", function()
+  local root = repo({ ["f.txt"] = { "a" } })
+  write(root .. "/new.txt", { "n" })
+  sh(root, "jj", "status")
+  expect_ref(edit(root .. "/new.txt"), {})
+end)
+
+test("ignored file: no reference", function()
+  local root = repo({ [".gitignore"] = { "*.env" } })
+  write(root .. "/secret.env", { "s" })
+  sh(root, "jj", "status")
+  expect_ref(edit(root .. "/secret.env"), false)
+end)
+
 test("path with a space and quotes", function()
   local name = 'a "b" \\c.txt'
   local root = repo({ [name] = { "a" } })
