@@ -153,6 +153,18 @@ test("refreshes after a jj operation", function()
   expect_ref(buf, { "b" })
 end)
 
+test("secondary workspace: diffs and refreshes", function()
+  local root = repo({ ["f.txt"] = { "a" } })
+  local second = root .. "-second"
+  sh(root, "jj", "workspace", "add", second)
+  write(second .. "/f.txt", { "b" })
+  sh(second, "jj", "status")
+  local buf = edit(second .. "/f.txt")
+  expect_ref(buf, { "a" })
+  sh(second, "jj", "commit", "-m", "b")
+  expect_ref(buf, { "b" })
+end)
+
 test("outside jj: the next source", function()
   local dir = assert(vim.uv.fs_mkdtemp(sandbox .. "/plain-XXXXXX"))
   write(dir .. "/f.txt", { "a" })

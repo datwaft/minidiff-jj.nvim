@@ -42,6 +42,21 @@ local function real_path(buf)
   return vim.uv.fs_realpath(name) or vim.fs.joinpath(vim.uv.fs_realpath(dir) or dir, vim.fs.basename(name))
 end
 
+--- Finds the repo directory, which secondary workspaces store as a path relative to their `.jj` directory
+---@param root string
+---@return string
+local function find_repo_dir(root)
+  local jj_dir = vim.fs.joinpath(root, ".jj")
+  local repo = vim.fs.joinpath(jj_dir, "repo")
+  local stat = assert(vim.uv.fs_stat(repo), "minidiff-jj: missing jj repo: " .. repo)
+  if stat.type == "directory" then
+    return repo
+  end
+  local target = vim.trim(vim.fn.readfile(repo)[1])
+  local path = vim.startswith(target, "/") and target or vim.fs.joinpath(jj_dir, target)
+  return assert(vim.uv.fs_realpath(path), "minidiff-jj: missing jj repo: " .. path)
+end
+
 ---@param buf integer
 local function refresh(buf)
   local state = buffers[buf]
@@ -103,7 +118,7 @@ local function open_workspace(root)
     timer = assert(vim.uv.new_timer()),
   }
   -- Every jj operation (commit, rebase, snapshot, ...) replaces the operation heads, which can change `@`
-  local heads = vim.fs.joinpath(root, ".jj", "repo", "op_heads", "heads")
+  local heads = vim.fs.joinpath(find_repo_dir(root), "op_heads", "heads")
   assert(
     workspace.watcher:start(heads, {}, function(err)
       assert(not err, err)
