@@ -143,6 +143,16 @@ test("path with a space and quotes", function()
   expect_ref(edit(vim.fs.joinpath(root, name)), { "a" })
 end)
 
+test("refreshes after a jj operation", function()
+  local root = repo({ ["f.txt"] = { "a" } })
+  write(root .. "/f.txt", { "b" })
+  sh(root, "jj", "status")
+  local buf = edit(root .. "/f.txt")
+  expect_ref(buf, { "a" })
+  sh(root, "jj", "commit", "-m", "b")
+  expect_ref(buf, { "b" })
+end)
+
 test("outside jj: the next source", function()
   local dir = assert(vim.uv.fs_mkdtemp(sandbox .. "/plain-XXXXXX"))
   write(dir .. "/f.txt", { "a" })
@@ -154,6 +164,16 @@ test("outside jj: the next source", function()
     ),
     "the fallback source didn't attach"
   )
+end)
+
+test("disabled buffers stay disabled after a jj operation", function()
+  local root = repo({ ["f.txt"] = { "a" } })
+  local buf = edit(root .. "/f.txt")
+  expect_ref(buf, { "a" })
+  require("mini.diff").disable(buf)
+  sh(root, "jj", "new")
+  vim.wait(500)
+  assert(require("mini.diff").get_buf_data(buf) == nil, "the buffer was enabled again")
 end)
 
 local failures = 0

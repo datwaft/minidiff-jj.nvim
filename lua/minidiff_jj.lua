@@ -2,6 +2,20 @@
 -- commit, as `jj diff` does
 local M = {}
 
+---@class minidiff_jj.Workspace
+---@field root    string
+---@field buffers table<integer, true> Attached buffers in the workspace
+---@field watcher uv.uv_fs_event_t     Watches the repo's operation heads
+---@field timer   uv.uv_timer_t        Debounces refreshes
+
+---@class minidiff_jj.Buffer
+---@field workspace minidiff_jj.Workspace
+
+---@type table<string, minidiff_jj.Workspace>
+local workspaces = {}
+---@type table<integer, minidiff_jj.Buffer>
+local buffers = {}
+
 -- A diff tool that prints the left side of a file's diff: the file in the parents of `@`, merged if
 -- there are several, and before its rename if it was renamed
 local print_left = {
@@ -29,23 +43,20 @@ local function real_path(buf)
 end
 
 ---@param buf integer
----@return false?
-local function attach(buf)
-  local path = real_path(buf)
-  if not path or vim.fn.executable("jj") == 0 then
-    return false
+local function refresh(buf)
+  local state = buffers[buf]
+  local root = state.workspace.root
+  local rel_path = vim.fs.relpath(root, assert(real_path(buf)))
+  -- The buffer was renamed out of the workspace
+  if not rel_path then
+    return require("mini.diff").set_ref_text(buf, nil)
   end
-  local root = vim.fs.root(path, ".jj")
-  if not root then
-    return false
-  end
-  local rel_path = assert(vim.fs.relpath(root, path))
 
   ---@param args           string[]
   ---@param on_exit        fun(result: vim.SystemCompleted)
   ---@param expected_error string?                          Part of an error message that doesn't fail the refresh
   local function jj(args, on_exit, expected_error)
-    -- `--ignore-working-copy`: reading the repo shouldn't record an operation
+    -- `--ignore-working-copy`: a snapshot would record an operation, which would refresh again
     local cmd = { "jj", "--ignore-working-copy", "--no-pager", "--color=never" }
     vim.list_extend(cmd, args)
     -- jj reads paths as filesets: quote them, relative to the workspace root
@@ -82,10 +93,77 @@ local function attach(buf)
   end)
 end
 
+---@param root string
+---@return minidiff_jj.Workspace
+local function open_workspace(root)
+  local workspace = {
+    root = root,
+    buffers = {},
+    watcher = assert(vim.uv.new_fs_event()),
+    timer = assert(vim.uv.new_timer()),
+  }
+  -- Every jj operation (commit, rebase, snapshot, ...) replaces the operation heads, which can change `@`
+  local heads = vim.fs.joinpath(root, ".jj", "repo", "op_heads", "heads")
+  assert(
+    workspace.watcher:start(heads, {}, function(err)
+      assert(not err, err)
+      workspace.timer:stop()
+      workspace.timer:start(
+        50, 0,
+        vim.schedule_wrap(function()
+          for buf in pairs(workspace.buffers) do
+            refresh(buf)
+          end
+        end)
+      )
+    end)
+  )
+  return workspace
+end
+
+---@param buf integer
+---@return false?
+local function attach(buf)
+  local path = real_path(buf)
+  if not path or vim.fn.executable("jj") == 0 then
+    return false
+  end
+  local root = vim.fs.root(path, ".jj")
+  if not root then
+    return false
+  end
+
+  workspaces[root] = workspaces[root] or open_workspace(root)
+  local workspace = workspaces[root]
+  workspace.buffers[buf] = true
+  buffers[buf] = { workspace = workspace }
+  refresh(buf)
+end
+
+---@param buf integer
+local function detach(buf)
+  local state = buffers[buf]
+  if not state then
+    return
+  end
+  buffers[buf] = nil
+
+  local workspace = state.workspace
+  workspace.buffers[buf] = nil
+  if next(workspace.buffers) then
+    return
+  end
+  workspaces[workspace.root] = nil
+  workspace.watcher:stop()
+  workspace.watcher:close()
+  workspace.timer:stop()
+  workspace.timer:close()
+end
+
 --- Generates the source. See `:h MiniDiff-source-specification`.
 ---@return table
 function M.gen_source()
-  return { name = "jj", attach = attach }
+  return { name = "jj", attach = attach, detach = detach }
 end
 
 return M
