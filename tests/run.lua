@@ -99,6 +99,14 @@ test("unchanged file: its own version", function()
   expect_ref(edit(root .. "/f.txt"), { "a", "b" })
 end)
 
+test("path with a space and quotes", function()
+  local name = 'a "b" \\c.txt'
+  local root = repo({ [name] = { "a" } })
+  write(vim.fs.joinpath(root, name), { "A" })
+  sh(root, "jj", "status")
+  expect_ref(edit(vim.fs.joinpath(root, name)), { "a" })
+end)
+
 test("outside jj: the next source", function()
   local dir = assert(vim.uv.fs_mkdtemp(sandbox .. "/plain-XXXXXX"))
   write(dir .. "/f.txt", { "a" })

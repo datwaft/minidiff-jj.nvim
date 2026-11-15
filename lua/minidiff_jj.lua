@@ -29,7 +29,9 @@ local function attach(buf)
 
   -- `--ignore-working-copy`: reading the repo shouldn't record an operation
   local cmd = { "jj", "--ignore-working-copy", "--no-pager", "--color=never" }
-  vim.list_extend(cmd, { "file", "show", "-r", "@-", "--", vim.fs.relpath(root, path) })
+  -- jj reads paths as filesets: quote them, relative to the workspace root
+  local fileset = ('root-file:"%s"'):format((vim.fs.relpath(root, path):gsub('[\\"]', "\\%0")))
+  vim.list_extend(cmd, { "file", "show", "-r", "@-", "--", fileset })
   vim.system(
     cmd, { cwd = root, text = true },
     vim.schedule_wrap(function(result)
