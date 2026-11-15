@@ -10,6 +10,7 @@ local M = {}
 
 ---@class minidiff_jj.Buffer
 ---@field workspace minidiff_jj.Workspace
+---@field job       vim.SystemObj?        The running jj command of the latest refresh
 
 ---@type table<string, minidiff_jj.Workspace>
 local workspaces = {}
@@ -60,6 +61,10 @@ end
 ---@param buf integer
 local function refresh(buf)
   local state = buffers[buf]
+  if state.job then
+    state.job:kill("sigterm")
+    state.job = nil
+  end
   local root = state.workspace.root
   local rel_path = vim.fs.relpath(root, assert(real_path(buf)))
   -- The buffer was renamed out of the workspace
@@ -76,9 +81,15 @@ local function refresh(buf)
     vim.list_extend(cmd, args)
     -- jj reads paths as filesets: quote them, relative to the workspace root
     vim.list_extend(cmd, { "--", ('root-file:"%s"'):format((rel_path:gsub('[\\"]', "\\%0"))) })
-    vim.system(
+    local job
+    job = vim.system(
       cmd, { cwd = root, text = true },
       vim.schedule_wrap(function(result)
+        -- Detached, or a newer refresh started
+        if buffers[buf] ~= state or state.job ~= job then
+          return
+        end
+        state.job = nil
         assert(
           result.code == 0 or (expected_error and result.stderr:find(expected_error, 1, true)),
           ("minidiff-jj: %s failed: %s"):format(table.concat(cmd, " "), result.stderr)
@@ -86,6 +97,7 @@ local function refresh(buf)
         on_exit(result)
       end)
     )
+    state.job = job
   end
 
   jj({ "diff", "-r", "@", "-T", 'self.status() ++ "\\n"' }, function(diff)
@@ -162,6 +174,9 @@ local function detach(buf)
     return
   end
   buffers[buf] = nil
+  if state.job then
+    state.job:kill("sigterm")
+  end
 
   local workspace = state.workspace
   workspace.buffers[buf] = nil

@@ -188,6 +188,20 @@ test("disabled buffers stay disabled after a jj operation", function()
   assert(require("mini.diff").get_buf_data(buf) == nil, "the buffer was enabled again")
 end)
 
+test("buffers disabled while jj runs stay disabled", function()
+  local root = repo({ ["f.txt"] = { "a" } })
+  local buf = edit(root .. "/f.txt")
+  assert(
+    vim.wait(5000, function()
+      return require("mini.diff").get_buf_data(buf) ~= nil
+    end, 1
+    )
+  )
+  require("mini.diff").disable(buf)
+  vim.wait(500)
+  assert(require("mini.diff").get_buf_data(buf) == nil, "the buffer was enabled again")
+end)
+
 local failures = 0
 for _, case in ipairs(tests) do
   local ok, err = pcall(case[2])
