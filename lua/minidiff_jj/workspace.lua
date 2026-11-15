@@ -10,8 +10,13 @@ local M = {}
 ---@type table<string, minidiff_jj.Workspace>
 local workspaces = {}
 
---- Finds the repo directory, which secondary workspaces store as a path relative to their `.jj` directory
----@param root string
+--- Gets the repo directory of a workspace.
+---
+--- In the first workspace of a repo, `.jj/repo` is the repo directory. In a workspace that `jj workspace add` made,
+--- `.jj/repo` is a file. This file contains the path of the repo directory, relative to the `.jj` directory.
+---
+--- Causes an error if the repo directory does not exist.
+---@param root string Workspace root
 ---@return string
 local function find_repo_dir(root)
   local jj_dir = vim.fs.joinpath(root, ".jj")
@@ -25,7 +30,11 @@ local function find_repo_dir(root)
   return assert(vim.uv.fs_realpath(path), "minidiff-jj: missing jj repo: " .. path)
 end
 
----@param root string
+--- Makes the state of a workspace and starts its watcher.
+---
+--- The watcher watches the operation heads of the repo, which jj replaces after each operation. When the changes stop
+--- for 50 ms, the watcher calls `on_change` of each buffer in the workspace.
+---@param root string Workspace root
 ---@return minidiff_jj.Workspace
 local function open(root)
   local workspace = {
@@ -53,7 +62,9 @@ local function open(root)
   return workspace
 end
 
---- Adds a buffer to its workspace, opening the workspace's watcher if it's the first one
+--- Adds a buffer to its workspace. If the buffer is the first one, this function opens the workspace.
+---
+--- `on_change` runs after each jj operation in the repo, also operations from other workspaces of the repo.
 ---@param root      string  Workspace root
 ---@param buf       integer
 ---@param on_change fun()   Called after every jj operation in the repo
@@ -62,7 +73,10 @@ function M.add(root, buf, on_change)
   workspaces[root].buffers[buf] = on_change
 end
 
---- Removes a buffer from its workspace, closing the workspace's watcher if it was the last one
+--- Removes a buffer from its workspace. If the buffer was the last one, this function stops the watcher of the
+--- workspace.
+---
+--- Causes an error if the workspace is not open.
 ---@param root string  Workspace root
 ---@param buf  integer
 function M.remove(root, buf)
@@ -78,8 +92,10 @@ function M.remove(root, buf)
   workspace.timer:close()
 end
 
---- Snapshots the working copy, which records new and renamed files. Calls in the same event loop
---- iteration (`:wall`) share one snapshot.
+--- Records a snapshot of the working copy with `jj util snapshot`, so that jj sees new and renamed files. The snapshot
+--- is a jj operation, so the watcher then updates the buffers.
+---
+--- The calls in one event loop iteration (for example, from `:wall`) share one snapshot. Causes an error if jj fails.
 ---@param root string Workspace root
 function M.snapshot(root)
   local workspace = assert(workspaces[root], "minidiff-jj: unknown workspace: " .. root)
