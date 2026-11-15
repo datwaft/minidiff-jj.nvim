@@ -1,6 +1,19 @@
--- minidiff-jj.nvim: a mini.diff source that diffs buffers against the parent of jj's working-copy
--- commit (`@-`)
+-- minidiff-jj.nvim: a mini.diff source that diffs buffers against the parents of jj's working-copy
+-- commit, as `jj diff` does
 local M = {}
+
+-- A diff tool that prints the left side of a file's diff: the file in the parents of `@`, merged if
+-- there are several, and before its rename if it was renamed
+local print_left = {
+  "--config",
+  'merge-tools.minidiff-jj-left.program="cat"',
+  "--config",
+  'merge-tools.minidiff-jj-left.diff-args=["$left"]',
+  "--config",
+  'merge-tools.minidiff-jj-left.diff-invocation-mode="file-by-file"',
+  "--tool",
+  "minidiff-jj-left",
+}
 
 --- Resolves symlinks, to diff against the repo of the original file. A file not written yet has its
 --- directory resolved.
@@ -59,9 +72,9 @@ local function attach(buf)
       )
     elseif status == "added" then
       require("mini.diff").set_ref_text(buf, "")
-    elseif status == "modified" or status == "removed" then
-      jj({ "file", "show", "-r", "@-" }, function(show)
-        require("mini.diff").set_ref_text(buf, show.stdout)
+    elseif status == "modified" or status == "renamed" or status == "copied" or status == "removed" then
+      jj(vim.list_extend({ "diff", "-r", "@" }, print_left), function(left)
+        require("mini.diff").set_ref_text(buf, left.stdout)
       end)
     else
       error(("minidiff-jj: unknown jj diff status %q"):format(status))
