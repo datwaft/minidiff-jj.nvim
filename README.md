@@ -3,7 +3,7 @@
 > [!WARNING]
 > I vibe-coded the shit out of this plugin, as it should be deprecated as soon as [`mini.diff`](https://github.com/nvim-mini/mini.diff) adds [`jj`](https://github.com/jj-vcs/jj) support.
 
-This plugins adds support for [`jj`](lua/minidiff_jj/reference.lua:5) in [`mini.diff`](https://github.com/nvim-mini/mini.diff).
+This plugin adds support for [`jj`](https://github.com/jj-vcs/jj) in [`mini.diff`](https://github.com/nvim-mini/mini.diff).
 
 ## Installation
 
